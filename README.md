@@ -5,7 +5,7 @@ Improving customer engagement at VMWare through Analytics. Data consists of arou
 VMware had various software, cloud and management products; it enabled enterprises to apply a software defined approach to business and IT.They have both digital and non- digital data for their customers and digital data for non-customers. The objective of this project is to analyze the data on customer behavior and provide insights on customer engagement. VMWare Customer Engagement file has the code for the analysis. Dataset - https://store.hbr.org/product/improving-customer-engagement-at-vmware-through-analytics/IMB623
 
 # Technologies
-Project is created with R Studio - SMOTE, LiblineaR, ggplot2, randomForest, gbm, xgboost
+Project created with R Studio - SMOTE, LiblineaR, ggplot2, randomForest, gbm, xgboost
 
 # Data Analysis & Modeling
 1) Handled the null values and necessary conversion of data types in order to process the training data.
