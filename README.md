@@ -15,6 +15,6 @@ Project created with R Studio - SMOTE, LiblineaR, ggplot2, randomForest, gbm, xg
 5) After the feature selection  built various models Random Forest, Regularized Lasso/Ridge, XGBoost to check which performs better on unseen data.
 
 # Results
-The variables that are most crucial for the user conversion from visitor to a customer obtained by feature selection are product page views, top resources and pdf downloads, first data of download. Based on various model built, LASSO regression and Gradient Boosting model were giving better recall values and accuracy. Performance of the model can be imprved by understanding the user-behavior of more users. 
+The variables that are most crucial for the user conversion from visitor to a customer analyzed by feature selection are product page views, top resources and pdf downloads, first data of download. Based on various model built, LASSO regression and Gradient Boosting model were giving better recall values and accuracy. Performance of the model can be imprved by understanding the user-behavior of more users. 
 
 With the developed model, there is value addition to the marketing department and the sales department as Marketing department will be able to understand how the company having people at various stages respond to the product and Sales department can contact or can send personalized mails to the companies’ officials regarding the product they may be interested in.
