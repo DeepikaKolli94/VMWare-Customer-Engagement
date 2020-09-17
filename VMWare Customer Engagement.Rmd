@@ -1,0 +1,778 @@
+---
+title: "VMWare CUstomer Engagement"
+author: "Deepika Kolli"
+date: "October 20, 2019"
+output: pdf_document
+---
+
+
+#Importing training data
+```{r}
+training <- read.csv("C:/R Files/training.csv")
+train <- training  #Duplicating the data frame to perform cleansing
+train <- train[-1] #removed the serial number column from the data
+```
+
+
+##DATA CLEANING
+#step 1: #collecting column indexes which have same value in all the observations and removal of those columns
+```{r}
+a=0
+i=0
+col_same_index=c()
+for (i in 1:ncol(train)) {
+  train_1 <- as.factor(train[[i]])
+  if (length(levels(train_1)) ==1) {
+    a<- a+1
+    col_same_index[a] <- i
+  }
+}
+col_same_index
+
+#col_same_index gives index of all the columns with only single value
+train= train[,-col_same_index]
+```
+
+
+##combining with validation data to clean the validation data together with training data for initial cleaning of features
+```{r}
+validation=read.csv("C:/R Files/validation.csv") 
+validation=validation[,names(train)]
+to_clean= rbind(train,validation) 
+```
+
+
+
+##Step 2: creating a new level "NotAVailable" for capturing both NAs and Unknown values in each categorical column
+```{r}
+#from the csv data analysed each column to decide which are categorical and considered their indexes (excluding the serial number index while starting index)
+train_1=to_clean
+category_index <- c(155,157:164,193,226:253,335:344,347:359,474,361:365,371:376,466:471,485,486,509:576)
+for (i in category_index) {
+  train_1[[i]] <- as.factor(train_1[,i]) #Converting variables of category type to Factor
+  lev<-levels(train_1[,i])
+  lev[length(lev)+1] <- "NotExists"
+  train_1[[i]] <- factor(train_1[[i]],levels =lev ) 
+  train_1[,i]<- replace(train_1[,i], is.na(train_1[,i]) | train_1[,i] == "Unknown","NotExists")
+}
+```
+
+
+
+#step 3: #collecting column indexes of the  date columns which have 70% or more data as 9999 from the data set of 576 columns
+```{r}
+#taken the dates_index by analyzing the csv file for dates to check if the column has meaningful data
+#0.7*50006=35004.2
+l=0
+m=0
+train_2<- train_1
+dates_index <- c(195:213,216:222,409:460)
+col_index_dates <- c()
+for (l in dates_index) {
+  if(sum(train_2[,l]==9999)>=(0.7*50006)){
+    m=m+1
+    col_index_dates[m]=l
+  }
+}
+#col_index_dates
+```
+
+
+##step 4: #collecting index of  columns that have more than 70% of NAs 
+```{r}
+p=0
+j=0
+train_3<- train_1
+col_index_na_th= c()
+for (j in 1:ncol(train_3)) {
+  if(sum(is.na(train_1[,j]))>=(0.7*50006)){
+    p=p+1
+    col_index_na_th[p]=j
+  }
+}
+col_index_na_th
+```
+
+##STep 5: imputation for numeric columns
+```{r}
+#we imputed NA with 0 and then removed all the negative rows in columns that were supposed to have positive values.
+col_negative <- c(156,215,254:259,263,268:330,366:370,479:484,487:508)
+i=0
+for (i in col_negative) {
+  train_1[[i]]<-ifelse (is.na(train_1[,i]),0,train_1[[i]])
+  train_1[,i]<-ifelse(train_1[,i]<0,0,train_1[[i]])
+}
+```
+
+
+##step 6: removal of collected indexes(from above code) from the training data set
+```{r}
+#Removing all the collected indexes from above along with indexes of columns which have more than 53 categories which prevented us from running RF
+char_indx <- c(155,157:160,162:164,335:336,338:343,347:349)
+remove_col_indexes<-c(261,350,351,472:477,478,col_index_dates,char_indx,col_index_na_th)
+train_1<-train_1[,-remove_col_indexes]
+```
+
+
+```{r}
+#checking if there are any duplicate columns and If exists removed them from the data set
+train_1<-train_1[!duplicated(as.list(train_1))]
+```
+
+
+##After cleaning data ,Before we go ahead with smote and feature selection we split the data again to their corresponding train and validation set
+```{r}
+split=nrow(train_1)/2
+training_clean=train_1[1:split,]
+validation_clean=train_1[split+1:nrow(train_1),]
+```
+
+
+##STEp 7: SMOTE To handle imbalanced data
+```{r error=TRUE}
+#install.packages("DMwR")
+```
+
+```{r}
+library(DMwR)
+library(dplyr)
+train_2=training_clean
+train_2$target = as.factor(train_2$target)
+train_2 <- mutate(train_2,newtarget = ifelse(target==0,0,1))
+str(train_2$newtarget)
+train_2$newtarget = as.factor(train_2$newtarget)
+balanced_data=SMOTE(newtarget~., train_2, perc.over = 900,  perc.under = 300)#k=5 control parameter
+table(balanced_data$newtarget)
+str(balanced_data$target)
+write.csv(balanced_data,"C:/R Files/balanced_train_Data.csv")
+```
+
+
+##Feature selection
+
+##step 1: Random forest with smoting(balanced data) to get the important variables and do first level feature selection
+```{r}
+l=0
+classes= data.frame()
+for (l in 1:ncol(balanced_data)){
+  classes[l,1]= class(balanced_data[[l]])
+  classes[l,2]=l
+}
+numeric_index= subset(classes[,2],classes[,1]!="factor")
+categorical_index = subset(classes[,2],classes[,1]=="factor")
+balanced_data$target <- as.factor(balanced_data$target)
+library(randomForest)
+fit_smoted=randomForest(balanced_data$target~., data=balanced_data[,-(ncol(balanced_data))],ntree=50)
+fit_smoted
+imp_values_smoted=0
+imp_values_smoted=fit_smoted$importance
+imp_values_smoted_1= cbind(row.names(imp_values_smoted),imp_values_smoted)
+imp_values_smoted_2=sort(imp_values_smoted_1[,2],decreasing=TRUE)
+#imp_values_smoted_2
+write.csv(imp_values_smoted_2,"C:/R Files/Significant_variables_smoted.csv")
+
+```
+
+
+#step 2: considering the top 150 significant variables
+```{r}
+significant_var= read.csv("C:/R Files/Significant_variables_smoted1.csv")  
+significant_var= significant_var[1:150,]
+colname <- significant_var[,1]
+index <- match(colname, names(train_1))
+#index
+```
+
+#STep 3: only retaining top 150 columns in training data 
+```{r}
+train_newdata= balanced_data[,index]#new data set after feature slection and balancing data 
+#train_newdata=cbind(train_newdata,balanced_data$target)
+train_newdata$target <- balanced_data$target 
+```
+
+
+##STep 4: choosing lasso model and then choosing features with non zero coefficients from the model
+## LASSO  considering recall instead of accuracy
+```{r}
+library(LiblineaR)
+set.seed(789)
+target_col=length(train_newdata)
+target_col
+
+# Constructing train and test data from the training data
+train_index <- sample(2, nrow(train_newdata), replace = T, prob = c(0.8, 0.2))
+xTrain <- train_newdata[train_index==1,-target_col]
+xTest <- train_newdata[train_index==2,-target_col]
+yTrain <- as.data.frame(train_newdata[train_index==1,target_col])
+yTest <- train_newdata[train_index==2,target_col]
+
+
+#######Normalizing data#########
+l=0
+classes1= data.frame()
+for (l in 1:ncol(xTrain)){
+  classes1[l,1]= class(xTrain[[l]])
+  classes1[l,2]=l
+}
+numeric_index1= subset(classes1[,2],classes1[,1]!="factor")
+categorical_index1 = subset(classes1[,2],classes1[,1]=="factor")
+snum <- as.data.frame(scale(xTrain[,numeric_index1],center=TRUE,scale=TRUE))
+sfactor =xTrain[,categorical_index1]
+library(caret)
+
+
+##one hot encoding for performing lasso
+dum <- dummyVars("~.",data = sfactor)
+encoded_Data <- data.frame(predict(dum, newdata = sfactor))
+
+
+#encoded_Data
+s_new = as.data.frame(cbind(snum,encoded_Data))
+
+
+#normalizing test data 
+snum_test <- as.data.frame(scale(xTest[,numeric_index1],center=TRUE,scale=TRUE))
+sfactor_test =xTest[,categorical_index1]
+dum_test <- dummyVars("~.",data = sfactor_test)
+encoded_Data_test <- data.frame(predict(dum_test, newdata = sfactor_test))
+#encoded_Data_test
+s_new_test = as.data.frame(cbind(snum_test,encoded_Data_test))
+i=0
+p=0
+for (i in 1:ncol(s_new_test))
+{ if (sum(is.na(s_new_test[,i])>0))
+  s_new_test[,i]=replace(s_new_test[,i],is.na(s_new_test[,i]),0)
+
+}
+#(s_new_test[,39])
+tryTypes <- c(6)
+tryCosts <- c(5,3,1,0.8,0.75,0.7,0.6,0.55, 0.1,0.05,0.01)
+bestCost2 <- NA
+bestrecall2 <- 0
+bestType2 <- NA
+for(ty in tryTypes){
+  for(co in tryCosts){
+    #building model on train data 
+    acc <- LiblineaR(data=s_new, target=yTrain, type=ty, cost=co, verbose=FALSE)
+    
+    #cross validating with test data 
+    p_test1 <- predict(acc,s_new_test)
+    
+    # Display confusion matrix
+    res_test1 <- table(p_test1$predictions,yTest)
+    
+    #print(res_test1)
+    #finding recall for test data 
+    res_test1 <- table(p_test1$predictions,yTest)   
+    recall_test1=diag(res_test1)/colSums(res_test1)
+    overall_recall_test1= mean(recall_test1)    
+    accuracy=sum(diag(res_test1))/(sum(colSums(res_test1)))
+    
+    cat("\n \n Results for ty: ", ty ,"and ","\n ",sep="")
+    beta_coef1=as.data.frame(acc$W)
+    i=0
+    m=0
+    selected_var_l=c()
+    for(i in 1:ncol(beta_coef1)){
+      if(sum(beta_coef1[,i] !=0))
+      { m=m+1
+      selected_var_l[m]=i
+      }
+      
+    }
+    cat( "no. of columns ",length(selected_var_l),"\n"," cost = ", co, "\n recall: ", overall_recall_test1)
+    
+    #choosing cost based on best recall value
+    if(overall_recall_test1>bestrecall2){
+      bestCost2 <- co
+      bestrecall2 <- overall_recall_test1
+      bestType2 <- ty
+    }
+  }
+}
+cat("Best model type is:",bestType2,"\n")
+cat("Best cost is:",bestCost2,"\n")
+cat("Best recall is:",bestrecall2,"\n")
+
+# Re-train best model with best cost value.
+m2 <- LiblineaR(data=s_new,target=yTrain,type=bestType2,cost=bestCost2)
+
+# Make prediction for test
+p_test2 <- predict(m2,s_new_test)
+
+# Display confusion matrix
+res_test2 <- table(p_test2$predictions,yTest)
+print(res_test2)
+recall_test=c()
+recall_test2=diag(res_test2)/colSums(res_test2)
+recall_test2
+overall_recall_test2= mean(recall_test2)
+overall_recall_test2
+accuracy_test2=sum(diag(res_test2))/sum(colSums(res_test2))
+accuracy_test2
+## decided to use recall as deciding parameter as classification is better in that for minority classes.
+```
+
+
+
+## feature selection from the coefficients of the built best lasso model
+
+```{r}
+beta_coef=as.data.frame(m2$W)
+i=0
+m=0
+selected_var=c()
+for(i in 1:ncol(beta_coef)){
+  if(sum(beta_coef[,i] !=0))
+  { m=m+1
+  selected_var[m]=i
+  }
+  
+}
+selected_var
+length(selected_var)
+#fetching the column names from s_new
+#install.packages("stringr")
+library(stringr)
+selected_var_names= colnames(s_new[,selected_var])
+i=0
+## getting the column names from the encoded names
+for (i in 1: length(selected_var_names)){
+  locate_index=str_locate(pattern='\\.',selected_var_names[i])
+  if(!is.na(locate_index[1] ))
+    selected_var_names[i]=substr(selected_var_names[i],0,locate_index[1]-1)
+}
+
+## removing duplicate column names after replcaing the string in encoded col names 
+selected_var_names=selected_var_names[!duplicated(selected_var_names)]
+length(selected_var_names)
+```
+
+##dataset with final selected features
+```{r}
+training_final=training_clean[,selected_var_names]
+training_final$target=training_clean$target
+validation_final=validation_clean[,selected_var_names]
+validation_final$target=validation_clean$target
+```
+
+
+##################################
+#MODEL BUILDING
+##################################
+
+# model 1. Random forest with cross validation 
+```{r}
+k <- 3
+nmethod <- 1
+folds <- cut(seq(1,nrow(training_final)),breaks=k,labels=FALSE) 
+models.err <- matrix(-1,k,nmethod, dimnames=list(paste0("Fold", 1:k), c("rf")))
+for(i in 1:k)
+{ ncol(train)
+  trainIndexes <- which(folds==i, arr.ind=TRUE) 
+  Validation <- training_final[trainIndexes, ] 
+  Train <- training_final[-trainIndexes, ] 
+  mtry_list= c(2:13)
+  pr.err <- c()
+  for(mt in mtry_list){
+    library(randomForest)
+    rf <- randomForest(target~., data = Train, ntree = 20, mtry = mt)
+    predicted <- predict(rf, newdata = Validation, type = "class")
+    pr.err <- c(pr.err,mean(Validation$target != predicted)) 
+  }
+  bestmtry <- which.min(pr.err)
+  
+  #validation_final is the test data given in the case study
+  library(randomForest)
+  rf <- randomForest(target~., data = Train, ntree = 20, mtry = bestmtry)
+  rf.pred <- predict(rf, newdata = validation_final, type = "class")
+  rf.pred
+  models.err[i] <- mean(validation_final$target != rf.pred)
+}
+mean(models.err)
+```
+
+
+##Regularized logistic models(LASSo,RIDGE)
+```{r}
+set.seed(12389)
+target_col=length(training_final)
+target_col
+# Constructing train and validation data from the training data for cross validation
+train_index <- sample(2, nrow(training_final), replace = T, prob = c(0.7, 0.3))
+xTrain <- training_final[train_index==1,-target_col]
+xTest <- training_final[train_index==2,-target_col]
+yTrain <- as.data.frame(training_final[train_index==1,target_col])
+yTest <- training_final[train_index==2,target_col]
+
+#######Normalizing data#########
+l=0
+classes1= data.frame()
+for (l in 1:ncol(xTrain)){
+  classes1[l,1]= class(xTrain[[l]])
+  classes1[l,2]=l
+}
+numeric_index1= subset(classes1[,2],classes1[,1]!="factor")
+categorical_index1 = subset(classes1[,2],classes1[,1]=="factor")
+snum_final <- as.data.frame(scale(xTrain[,numeric_index1],center=TRUE,scale=TRUE))
+sfactor_final =xTrain[,categorical_index1]
+library(caret)
+
+##one hot encoding for performing lasso
+dum <- dummyVars("~.",data = sfactor)
+encoded_Data_final_tr <- data.frame(predict(dum, newdata = sfactor_final))
+#encoded_Data
+s_new_final = as.data.frame(cbind(snum_final,encoded_Data_final_tr))
+#normalizing test data 
+snum_test_final <- as.data.frame(scale(xTest[,numeric_index1],center=TRUE,scale=TRUE))
+sfactor_test_final =xTest[,categorical_index1]
+dum_test <- dummyVars("~.",data = sfactor_test_final)
+encoded_Data_test_final <- data.frame(predict(dum_test, newdata = sfactor_test_final))
+#encoded_Data_test
+s_new_test_final = as.data.frame(cbind(snum_test_final,encoded_Data_test_final))
+i=0
+p=0
+##to impute na values with 0 in columns
+for (i in 1:ncol(s_new_test_final))
+{ if (sum(is.na(s_new_test_final[,i])>0))
+  s_new_test_final[,i]=replace(s_new_test_final[,i],is.na(s_new_test_final[,i]),0)
+
+}
+```
+
+#regularized regression for parameter tuning 
+```{r}
+tryTypes <- c(0,6)
+tryCosts <- c(5,3,1,0.8,0.75,0.7,0.6,0.55)
+bestCostf <- NA
+bestrecallf <- 0
+bestTypef <- NA
+#cross validating to find best cost which given good recall as we are more concerned about it.
+for(ty in tryTypes){
+  for(co in tryCosts){
+    #building model on train data 
+    acc2 <- LiblineaR(data=s_new_final, target=yTrain, type=ty, cost=co, verbose=FALSE)
+    #cross validating with test data 
+    p_test1 <- predict(acc2,s_new_test_final)
+    # Display confusion matrix
+    res_test1 <- table(p_test1$predictions,yTest)
+    #length(yTest[,1])
+    length(p_test1$predictions)
+    #finding recall for test data 
+    res_test1_f <- table(p_test1$predictions,yTest)   
+    res_test1_f
+    recall_test1_f=diag(res_test1_f)/colSums(res_test1_f)
+    recall_test1_f
+    overall_recall_test1= mean(recall_test1_f)    
+    accuracy=sum(diag(res_test1_f))/(sum(colSums(res_test1_f)))
+    
+    cat("\n \n Results for ty: ", ty ,"and ","\n ",sep="")
+    beta_coef1=as.data.frame(acc2$W)
+    i=0
+    m=0
+    #finding no. of columns have non zero coefficients
+    selected_var_l=c()
+    for(i in 1:ncol(beta_coef1)){
+      if(sum(beta_coef1[,i] !=0))
+      { m=m+1
+      selected_var_l[m]=i
+      }
+      
+    }
+    cat( "no. of columns ",length(selected_var_l),"\n"," cost = ", co, "\n recall: ", overall_recall_test1)
+    #choosing cost based on best recall value
+    if(overall_recall_test1>bestrecallf){
+      bestCostf <- co
+      bestrecallf <- overall_recall_test1
+      bestTypef <- ty
+    }
+  }
+}
+cat("Best model type is:",bestTypef,"\n")
+cat("Best cost is:",bestCostf,"\n")
+cat("Best recall is:",bestrecallf,"\n")
+```
+##best cost for type 6 :: 5
+##best cost for type=0 :: 5
+
+
+#LASSO predictions on unseen data
+```{r}
+#now considering the actual unseen data which is in validation final data set
+xTrain <- training_final[,-target_col]
+yTrain <- as.data.frame(training_final[,target_col])
+
+#normalizing test data 
+num_train_final <- as.data.frame(scale(xTrain[,numeric_index1],center=TRUE,scale=TRUE))
+factor_train_final =xTrain[,categorical_index1]
+dum_test <- dummyVars("~.",data = factor_train_final)
+encoded_Data_train_f <- data.frame(predict(dum_test, newdata = factor_train_final))
+#encoded_Data_test
+s_new_train_f = as.data.frame(cbind(num_train_final,encoded_Data_train_f))
+
+# Re-train best model with best cost value.
+m2 <- LiblineaR(data=s_new_train_f,target=yTrain,type=bestType2,cost=bestCost2)
+
+#now considering the actual unseen data which is in validation final data set
+xTest <- validation_final[,-target_col]
+yTest <- validation_final[,target_col]
+
+#normalizing test data 
+num_test_final <- as.data.frame(scale(xTest[,numeric_index1],center=TRUE,scale=TRUE))
+factor_test_final =xTest[,categorical_index1]
+dum_test <- dummyVars("~.",data = factor_test_final)
+encoded_Data_test_f <- data.frame(predict(dum_test, newdata = factor_test_final))
+#encoded_Data_test
+s_new_test_f = as.data.frame(cbind(num_test_final,encoded_Data_test_f))
+##to impute na values with 0 in columns
+for (i in 1:ncol(s_new_test_f))
+{ if (sum(is.na(s_new_test_f[,i])>0))
+  s_new_test_f[,i]=replace(s_new_test_f[,i],is.na(s_new_test_f[,i]),0)
+
+}
+# Make prediction for test
+p_test2 <- predict(m2,s_new_test_f)
+# Display confusion matrix
+res_test2 <- table(p_test2$predictions,yTest)
+print(res_test2)
+recall_test=c()
+#
+#for (i in ncol(res_test2))
+#{
+#  for (j in ncol(test2))
+#  {
+#    colsum[j]=sum(res_test2[j,i])
+#}
+#}
+for (i in 1:ncol(res_test2))
+{
+  
+  
+}
+recall_test2=diag(res_test2)/colSums(res_test2)
+recall_test2
+overall_recall_test2= mean(recall_test2)
+overall_recall_test2
+accuracy_test2=sum(diag(res_test2))/sum(colSums(res_test2))
+accuracy_test2
+```
+
+##Ridge predictions on unseen data with the tuned cost parameter
+```{r}
+#best cost taken from above printed costs and recall
+xTrain <- training_final[,-target_col]
+yTrain <- training_final[,target_col]
+
+#normalizing test data 
+num_train_final <- as.data.frame(scale(xTrain[,numeric_index1],center=TRUE,scale=TRUE))
+factor_train_final =xTrain[,categorical_index1]
+dum_test <- dummyVars("~.",data = factor_train_final)
+encoded_Data_train_f <- data.frame(predict(dum_test, newdata = factor_train_final))
+
+#encoded_Data_test
+s_new_train_f = as.data.frame(cbind(num_train_final,encoded_Data_train_f))
+
+# Re-train best model with best cost value.
+m2 <- LiblineaR(data=s_new_train_f,target=yTrain,type=0,cost=5)
+
+#now considering the actual unseen data which is in validation final data set
+xTest <- validation_final[,-target_col]
+yTest <- validation_final[,target_col]
+
+#normalizing test data 
+num_test_final <- as.data.frame(scale(xTest[,numeric_index1],center=TRUE,scale=TRUE))
+factor_test_final =xTest[,categorical_index1]
+dum_test <- dummyVars("~.",data = factor_test_final)
+encoded_Data_test_f <- data.frame(predict(dum_test, newdata = factor_test_final))
+
+#encoded_Data_test
+s_new_test_f = as.data.frame(cbind(num_test_final,encoded_Data_test_f))
+
+##to impute na values with 0 in columns
+for (i in 1:ncol(s_new_test_f))
+{ if (sum(is.na(s_new_test_f[,i])>0))
+  s_new_test_f[,i]=replace(s_new_test_f[,i],is.na(s_new_test_f[,i]),0)
+
+}
+# Make prediction for test
+p_test2 <- predict(m2,s_new_test_f)
+
+# Display confusion matrix
+res_test2 <- table(p_test2$predictions,yTest)
+print(res_test2)
+recall_test=c()
+recall_test2=diag(res_test2)/colSums(res_test2)
+recall_test2
+overall_recall_test2= mean(recall_test2)
+overall_recall_test2
+accuracy_test2=sum(diag(res_test2))/sum(colSums(res_test2))
+accuracy_test2
+```
+
+
+
+###Xtreme GRADIENT boosting
+```{r}
+library(xgboost)
+#s_new_train_f has hot encoded catgories,scaled numeric
+##Converting to dmatrix objects
+yTrain = as.integer(unlist(yTrain))
+yTest = as.integer(unlist(yTest))
+train.data = as.matrix(s_new_train_f)
+train.label = yTrain 
+test.data = as.matrix(s_new_test_f)
+test.label = yTest
+xgb.train = xgb.DMatrix(data=train.data,label=train.label)
+xgb.test = xgb.DMatrix(data=test.data,label=test.label)
+num_class <- 5
+params = list(
+  booster="gbtree",
+  eta=0.05,
+  max_depth=5,
+  gamma=3,
+  subsample=0.75,
+  colsample_bytree=1,
+  objective="multi:softprob",
+  eval_metric="mlogloss",
+  num_class=num_class
+)
+# Train the XGBoost classifer
+xgb.fit=xgb.train(
+  params=params,
+  data=xgb.train,
+  nrounds=100,
+  nthreads=1,
+  early_stopping_rounds=10,
+  watchlist=list(val1=xgb.train,val2=xgb.test),
+  verbose=1
+)
+# Review the final model and results
+xgb.fit
+xgb.pred = predict(xgb.fit,test.data,reshape=T)
+xgb.pred = as.data.frame(xgb.pred)
+xgb.pred
+
+# levels(xgb.pred$prediction)
+train_final2 <- training_final
+train_final2$target <- as.factor(train_final2$target)
+colnames(xgb.pred) <- levels(train_final2$target)
+colnames(xgb.pred)
+
+
+# Use the predicted label with the highest probability
+xgb.pred$prediction = apply(xgb.pred,1,function(x) colnames(xgb.pred)[which.max(x)])
+
+
+# xgb.pred$label = levels(data5$target)[test.label+1]
+xgb.pred$label <- as.factor(yTest)
+table(xgb.pred$prediction)
+library(caret)
+preds <- as.factor(xgb.pred$prediction)
+labels <- as.factor(xgb.pred$label)
+table(preds)
+confusionMatrix(preds, labels)
+
+
+# Calculate the final accuracy
+result = sum(xgb.pred$prediction==xgb.pred$label)/nrow(xgb.pred)
+print(paste("Final Accuracy =",sprintf("%1.2f%%", 100*result)))
+```
+
+## cross validation for parameter tuning of xgboost
+
+```{r}
+ControlParamteres <- trainControl(method = "cv",
+                                  number = 3,
+                                  savePredictions = TRUE,
+                                  classProbs = TRUE
+)
+parametersGrid <-  expand.grid(
+  nrounds=100,
+  max_depth=seq(from =3, to = 6, by = 1),
+  eta = c(0.01,0.02,0.03,0.04,0.05,0.001), 
+  gamma=1,
+  colsample_bytree=c(0.5,0.7),
+  min_child_weight=2,
+  subsample = 0.5
+)
+#parametersGrid
+train_for_cv <- train_2
+class(train_2$target)
+train_for_cv$target <- as.factor(train_for_cv$target)
+table(train_for_cv$target)
+class(train_for_cv$target)
+sum(is.na(train_for_cv$target))
+train_for_cv1 <- train_for_cv %>% 
+  mutate(target = factor(target, 
+                         labels = make.names(levels(target))))
+modelxgboost <- train(target~., 
+                      data = train_for_cv1,
+                      method = "xgbTree",
+                      trControl = ControlParamteres,
+                      tuneGrid=parametersGrid)
+modelxgboost
+xgboost2 <- 
+  train_data = train_2[,!names(train_2) %in% c("target")]
+test_data = test_2[,!names(test_2) %in% c("target")]
+predictions<-predict(modelxgboost,test_data)
+predictions <- as.factor(predictions)
+test_2$target <- as.factor(test_2$target)
+library(plyr)
+predictions1 <- revalue(predictions, c("X0" = 0,
+                                       "X1" = 1,
+                                       "X2" = 2,
+                                       "X3" = 3,
+                                       "X4" = 4,
+                                       "X5" = 5 ))
+names(data) <- c("new_name", "another_new_name")
+table(predictions1)
+confusionMatrix(predictions1, test_2$target)
+predictions2<-predict(modelxgboost,train_data)
+predictions2 <- as.factor(predictions2)
+train_2$target <- as.factor(train_2$target)
+library(plyr)
+predictions3 <- revalue(predictions2, c("X0" = 0,
+                                        "X1" = 1,
+                                        "X2" = 2,
+                                        "X3" = 3,
+                                        "X4" = 4,
+                                        "X5" = 5 ))
+```
+
+
+
+```{r}
+params2 = list(
+  booster="gbtree",
+  eta=0.001,
+  max_depth=3,
+  gamma=3,
+  subsample=0.5,
+  colsample_bytree=1,
+  objective="multi:softprob",
+  eval_metric="mlogloss",
+  num_class=num_class
+)
+# Train the XGBoost classifer
+xgb.fit2=xgb.train(
+  params=params2,
+  data=xgb.train,
+  nrounds=100,
+  nthreads=1,
+  early_stopping_rounds=10,
+  watchlist=list(val1=xgb.train,val2=xgb.test),
+  verbose=1
+)
+xgb.pred2 = predict(xgb.fit2,test.data,reshape=T)
+xgb.pred2 = as.data.frame(xgb.pred2)
+colnames(xgb.pred2) <- levels(train_final2$target)
+xgb.pred2$prediction = apply(xgb.pred2,1,function(x) colnames(xgb.pred2)[which.max(x)])
+# xgb.pred$label = levels(data5$target)[test.label+1]
+xgb.pred2$label <- as.factor(yTest)
+library(caret)
+preds2 <- as.factor(xgb.pred2$prediction)
+labels2 <- as.factor(xgb.pred2$label)
+table(preds2)
+table(labels2)
+confusionMatrix(preds2, labels2)
+```
